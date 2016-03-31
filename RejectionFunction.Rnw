@@ -1,0 +1,164 @@
+\documentclass{article}
+\usepackage{subcaption}
+\usepackage[margin=1in]{geometry}
+
+
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+%\SweaveOpts{width=7,height=9}
+
+\title{Rejection Sampler for Marginal Distribution of Variances}
+\maketitle
+
+
+\section{Psudeo code for rejection sampling}
+
+\begin{itemize}
+\item sample box index: unnormalized probability equals to area of the box times $exp$(upper bound of the box - minimal of the upper bounds of all boxes)
+\begin{itemize}
+ \item By subtracting the exponent of minimal of the upper bounds of all boxes, we can solve the small number problem while mainteining the ratio between sampling likelihoods.
+ \end{itemize}
+\item For each index:
+\begin{itemize}
+ \item uniformly draw sigma s and sigma e from the box
+ \item calculate true $log$(RL), and acceptance ratio $\alpha$
+ \item uniformly draw $u$ from [0,1], and accept if $u < \alpha$ 
+ \end{itemize}
+\item repeat if no enough samples
+\end{itemize}
+
+
+\section{R Function}
+<<function>>=
+library(lmmoptim)
+rejection=function(boxes,lines,n){
+  # initial setting
+  sample=matrix(NA,nrow=0,ncol=3)
+  # draw box indices
+  area = (boxes[,2]-boxes[,1])*(boxes[,4]-boxes[,3])
+  prob = exp(boxes[,6]-min(boxes[,6]))
+  
+  N = 1.5*n
+  
+  while (N>0) {
+    # for remaining samples
+    boxindex = sample(seq(1:dim(boxes)[1]),N,replace=T,prob = area * prob)
+    
+    # calculate sample frequency for each index
+    indexfreq=data.frame(table(boxindex))
+    indexfreq$boxindex=as.numeric(levels(indexfreq$boxindex))[indexfreq$boxindex]
+    for (j in 1:dim(indexfreq)[1]){
+      # sample uniformly from the box
+      sigmas=with(boxes,
+                  runif(n=indexfreq[j,2],min=sigsqs.lo[indexfreq[j,1]],max=sigsqs.hi[indexfreq[j,1]]))
+      sigmae=with(boxes,
+                  runif(n=indexfreq[j,2],min=sigsqe.lo[indexfreq[j,1]],max=sigsqe.hi[indexfreq[j,1]]))
+      eval.sigma=NULL
+      for (i in 1:length(sigmas)){
+        sigma = with(lines, a*sigmas[i]+b*sigmae[i])
+        eval.sigma[i] = with(lines, sum(- 0.5*(multiplier.log * log(sigma) + multiplier.inv/sigma)))
+      }
+      acceptprob=exp(eval.sigma-boxes[indexfreq[j,1],6])
+      
+      # accept if alpha > u
+      u=runif(length(sigmas))
+      sample=rbind(sample,matrix(c(sigmas[acceptprob>u],sigmae[acceptprob>u],acceptprob[acceptprob>u]),ncol=3))
+      
+    }  
+    # calculate remaining sample size
+    N=n-dim(sample)[1]
+    
+  }
+  output=as.data.frame(sample)
+  colnames(output)= c("sigmas","sigmae","acceptance")
+  return(output[1:n,])
+}
+@
+
+
+
+\section{Test with HMO Data}
+
+
+<<test,echo=FALSE,fig=TRUE, height=9, width=9>>=
+HMO <- read.csv("~/Documents/2016 Spring Semester/RandomEffects/HMO.csv")
+HMO_states <- read.csv("~/Documents/2016 Spring Semester/RandomEffects/HMO_states.csv")
+hmobig=merge(x = HMO, y = HMO_states, by = "state", all.x = TRUE)
+
+y <- hmobig$indPrem
+n <- length(y)
+mod <- lm(indPrem ~ expPerAdm + (region == "NE") + state, data = hmobig, x = TRUE)
+x <- mod$x[, 1:3]
+z <- mod$x[, -(1:3), drop = FALSE]
+SigE <- diag(n)
+SigS <- diag(44)
+
+linesA <- findlines(x, z, y, SigE, SigS)
+mlreboxA <- with(linesA,
+                 makebox(lims.sigsqs = c(0, max(int.sigsqs[is.finite(int.sigsqs)])),
+                         lims.sigsqe = c(0, max(int.sigsqe[is.finite(int.sigsqe)])),
+                         status = rep("straddle", nrow(linesA)),
+                         lines = linesA))
+boxes.HH11 <- findf(lines = linesA, mlreboxA, eps = 0.5, delE = 0, 
+                     delS = 0, ratio = TRUE, M = 20, maxit = 25)
+
+boxes=boxes.HH11
+lines=linesA
+n=50000
+
+
+
+test=rejection(boxes,lines,n)
+hist(test$acceptance,probability=T,main="Histogram of Acceptance Ratio", xlab="Acceptance Ratio")
+@
+
+
+<<echo=F>>=
+smallbox=boxes.HH11[(boxes.HH11$sigsqs.hi<1000 & boxes.HH11$sigsqe.lo<1000),]
+myshowfunc=function (boxes) 
+{
+    mle <- which.max(boxes$rll.lower)
+    mle.val <- boxes$rll.lower[mle]
+    hi <- which(boxes$rll.upper > mle.val)
+    p <- ggplot(boxes, aes(xmin = sigsqe.lo, xmax = sigsqe.hi, 
+        ymin = sigsqs.lo, ymax = sigsqs.hi))
+    return(p + 
+          geom_rect(aes(fill = rll.upper)) + scale_fill_continuous(limits = c(mle.val - 20, mle.val), low = "black", high = "white", na.value = "black", 
+        name = expression(L^b)) + 
+          geom_rect(data = boxes[hi,], aes(fill = rll.upper), color = "blue") +
+          geom_point(data = boxes[which.max(boxes$rll.upper), ], aes(x = sigsqe.lo, y = sigsqs.lo), color = "red", size = 5))
+}
+
+smallerbox=boxes.HH11[(boxes.HH11$sigsqs.hi<100 & boxes.HH11$sigsqe.lo<600 & boxes.HH11$sigsqe.lo>500),]
+
+@
+
+
+
+\begin{frame}
+	
+	\begin{center}
+<<echo=false,fig=T>>=
+library(gridExtra)
+	p <- showboxes(smallbox)
+  plot1 = p + scale_x_continuous(name = expression(sigma[e]^2)) +
+    scale_y_continuous(name = expression(sigma[s]^2)) +
+    theme_bw()
+
+	p <- myshowfunc(smallbox)
+  plot2 = p + scale_x_log10(name = expression(sigma[e]^2),
+                  breaks = c(300,500,1000)) +
+    scale_y_log10(name = expression(sigma[s]^2),
+                  breaks = c(3,10,30,100,300,1000)) +
+    theme_bw()
+	
+	grid.arrange(plot1,plot2, ncol=2)
+@ 
+
+Boxes and upper bounds generated with main function (only ploted for area where $\sigma^2_e<1000$ and $\sigma^2_s<1000$.)
+	\end{center}
+\end{frame}
+
+
+\end{document}
