@@ -161,4 +161,110 @@ Boxes and upper bounds generated with main function (only ploted for area where 
 \end{frame}
 
 
+
+
+<<echo=false,fig=T, height=9, width=9>>=
+library(hexbin)
+bin = hexbin(test$sigmas~ test$sigmae, xbins=50) 
+plot(bin, main="Sample Frequency", xlab = expression(sigma[e]^2) , ylab = expression(sigma[s]^2))
+@
+
+The density scatterplot looks in accordance with the upperbound density plot. The sharp edge at lower right corner seems unreasonable. However, the acceptance ratio at the area is still around 0.85, meaning the only possible reason is that there is a sudden decrease in $log$(RL).
+
+<<fig=T,,echo=false>>=
+
+# RL at each point
+
+se=seq(400,800)
+ss=seq(0,200)
+RL=expand.grid(se,ss)
+colnames(RL)=c("se","ss")
+highbound=matrix(RL$highbound,nrow=401,ncol=201,byrow=T)
+
+for (i in 1:80^2){
+  RL$highbound[i]=smallbox$rll.upper[which(RL$ss[i]>=smallbox$sigsqs.lo & RL$ss[i]<=smallbox$sigsqs.hi & RL$se[i]>=smallbox$sigsqe.lo & RL$se[i]<=smallbox$sigsqe.hi)]
+}
+library(scatterplot3d)
+scatterplot3d(RL$se,RL$ss,RL$highbound,angle=40)
+@
+
+<<fig=T,,echo=FALSE>>=
+scatterplot3d(RL$se,RL$ss,RL$highbound,angle=80)
+
+@
+
+
+
+These graphs show the upperbound of Restricted Likelihood for $sigma^2_e \in (400,800$ and $sigma^2_s \in (0,200)$. I think the problem is that most grids have the lowest upperbound, and only a small region has higher value.
+
+<<fig=T,echo=F>>=
+
+diff=matrix(0,nrow=401,ncol=201)
+for (i in 2:400){
+  for (j in 2:200){
+    s=highbound[i-1,j-1]+highbound[i,j-1]+highbound[i-1,j]
+    diff[i,j]=highbound[i,j]-s/3
+  }
+}
+a=matrix(diff,ncol=1,byrow=T)
+scatterplot3d(RL$se,RL$ss,a,angle=135)
+@
+
+This graph plots how much the upperbound of a grid changes from its upper left neighbours (upper grid, left grid, and upper-left grid). Most of them are 0, as boxes have length much greater than 1. From the first graph, when upperbound reaches its lowest change at around the line from (400,0) to (500,50), upperbound value hasn't been changed for grids to its right. I think it is the reason of the sharp edge.
+
+
+<<>>=
+
+data=data.frame(category=rep(c("A","B","C","D","E"),each=20))
+data$y=0
+data$y[1:20]=rnorm(20,10,5)
+data$y[21:40]=rnorm(20,20,8)
+data$y[41:60]=rnorm(20,30,8)
+data$y[61:80]=rnorm(20,15,6)
+data$y[81:100]=rnorm(20,40,8)
+data$x=rep(c(4,4.5,6,5,3),each=20)
+
+
+y <- data$y
+n <- length(y)
+mod <- lm(y ~ x + category, data = data, x = TRUE)
+x <- mod$x[, 1:2]
+z <- mod$x[, -(1:2), drop = FALSE]
+
+SigE <- diag(n)
+SigS <- diag(4)
+
+linesA <- findlines(x, z, y, SigE, SigS)
+mlreboxA <- with(linesA,
+                 makebox(lims.sigsqs = c(0, max(int.sigsqs[is.finite(int.sigsqs)])),
+                         lims.sigsqe = c(0, max(int.sigsqe[is.finite(int.sigsqe)])),
+                         status = rep("straddle", nrow(linesA)),
+                         lines = linesA))
+boxes.HH11 <- findf(lines = linesA, mlreboxA, eps = 1, delE = 0, 
+                     delS = 0, ratio = TRUE, M = 20, maxit = 15)
+
+
+test2=rejection(boxes.HH11,linesA,10^5)
+
+
+	p <- showboxes(boxes.HH11)
+  plot1 = p + scale_x_continuous(name = expression(sigma[e]^2)) +
+    scale_y_continuous(name = expression(sigma[s]^2)) +
+    theme_bw()
+
+	p <- myshowfunc(smallbox)
+  plot2 = p + scale_x_log10(name = expression(sigma[e]^2),
+                  breaks = c(300,500,1000)) +
+    scale_y_log10(name = expression(sigma[s]^2),
+                  breaks = c(3,10,30,100,300,1000)) +
+    theme_bw()
+	
+	grid.arrange(plot1,plot2, ncol=2)
+	
+
+bin = hexbin(test2$sigmas~ test2$sigmae, xbins=50) 
+plot(bin, main="Sample Frequency", xlab = expression(sigma[e]^2) , ylab = expression(sigma[s]^2))
+@
+
+
 \end{document}
